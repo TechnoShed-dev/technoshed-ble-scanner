@@ -1,0 +1,66 @@
+version: '3.7'
+services:
+
+  # 1. ZIGGY UNIFIED BACKEND SERVICE (Combines Receiver and Consolidation)
+  ziggy-backend:
+    image: python:3.11-slim
+    container_name: ziggy_unified_backend
+    
+    # Allows binding to the host IP (10.0.1.2:5001)
+    network_mode: host 
+    
+    environment:
+      TZ: Europe/London 
+      
+    volumes:
+      # Mount the unified runner script
+      - ./backend_runner.sh:/app/backend_runner.sh
+      # Mount the two Python scripts
+      - ./server_receiver.py:/app/server_receiver.py
+      - ./consolidator.py:/app/consolidator.py
+      - ./requirements.txt:/app/requirements.txt:ro
+      # Main log directory mount (rw access for saving/consolidating)
+      - /mnt/ssd/HOME/PUBLIC-SHARE/ziggy_logs:/app/ziggy_logs:rw 
+      
+    # Execute the runner script, which installs dependencies and starts both Flask and the consolidation loop
+    command: sh /app/backend_runner.sh
+      
+    working_dir: /app
+    restart: unless-stopped
+    
+  # 2. GRAFANA VISUALIZATION SERVICE 
+  ziggy-grafana:
+    image: grafana/grafana-oss
+    container_name: ziggy_grafana
+    
+    # We use host mode to expose the default Grafana port (e.g., 3000 or 3001)
+    network_mode: host 
+    
+    # Pre-install the CSV plugin and set default configuration
+    user: "472" # Standard Grafana user ID for permissions
+    environment:
+      GF_INSTALL_PLUGINS: "marcusolsson-csv-datasource"
+      GF_AUTH_ANONYMOUS_ENABLED: "true" 
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_SERVER_ROOT_URL: "http://10.0.1.2:3001" 
+      GF_SERVER_HTTP_PORT: "3001"
+      GF_PLUGINS_ALLOW_UNSIGNED: "marcusolsson-csv-datasource,fr-ser-sqlite-datasource"
+      GF_PLUGIN_ALLOW_LOCAL_MODE: "true"
+      GF_PLUGIN_MARCUSOLSSON_CSV_DATASOURCE_ALLOW_LOCAL_MODE: "true"
+      GF_PLUGIN_FR_SER_SQLITE_DATASOURCE_ALLOW_LOCAL_MODE: "true" # CRITICAL
+    volumes:
+      # Mount 1: Persistent storage for dashboards and database
+      - grafana-storage:/var/lib/grafana
+      # Mount 2: Your master CSV file location for Grafana to read
+      - /mnt/ssd/HOME/PUBLIC-SHARE/ziggy_logs:/var/lib/grafana/log_data:rw 
+      # Mount 3: Automatic datasource provisioning
+      - ./grafana-config.yaml:/etc/grafana/provisioning/datasources/00-data/my-ziggy-config.yaml:ro
+
+    restart: unless-stopped
+    depends_on:
+      # Grafana depends on the logs being consolidated first
+      - ziggy-backend
+
+# Add the persistent volume definition at the end
+volumes:
+  grafana-storage:

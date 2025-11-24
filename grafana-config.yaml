@@ -1,0 +1,14 @@
+apiVersion: 1
+datasources:
+  - name: Ziggy SQLite DB
+    type: frser-sqlite-datasource
+    access: proxy
+    # Leave url empty or generic
+    url: "" 
+    isDefault: true
+    version: 1
+    editable: true
+    jsonData:
+      # THE PATH GOES HERE
+      path: "/var/lib/grafana/log_data/ziggy_data.db"
+      sqliteJournalMode: "WAL"

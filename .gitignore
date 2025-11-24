@@ -1,0 +1,28 @@
+# --- Security & Secrets ---
+config_credentials.py
+.env
+*.key
+*.pem
+
+# --- Data & Logs (Do NOT commit these) ---
+*.csv
+*.db
+*.db-shm
+*.db-wal
+ziggy_logs/
+logs/
+
+# --- Python & System Junk ---
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+
+# --- Virtual Envs ---
+venv/
+.venv/
+env/
+
+# --- IDE Settings ---
+.vscode/
+.idea/
