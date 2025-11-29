@@ -1,6 +1,10 @@
 # ---------------------------------------------------------------------------------------
-# ZIGGY SERVER RECEIVER (V4.1 - Atomic Writes)
-# Purpose: Receives logs and saves them atomically to prevent "Partial Read" race conditions.
+# ZIGGY SERVER RECEIVER - V4.2 (Stable)
+# ---------------------------------------------------------------------------------------
+# PURPOSE: 
+# Lightweight Flask app to receive raw log files from sensor nodes.
+# Uses atomic write strategy (.part -> .csv) to ensure the Consolidator 
+# never reads a half-written file.
 # ---------------------------------------------------------------------------------------
 import os
 from flask import Flask, request

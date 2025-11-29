@@ -4,6 +4,32 @@
 
 This project uses "Ziggy" nodes (Raspberry Pi Pico W) to capture Bluetooth Low Energy (BLE) digital exhaust, and a Raspberry Pi 5 backend to analyze traffic density, dwell time, and device composition.
 
+# TechnoShed BLE Scanner - v7.0.0 (MariaDB Edition)
+
+## ⚠️ Major Update: Database Migration
+As of version 7.0.0, this project no longer supports SQLite (`.db` files). 
+It now requires a connection to a MySQL/MariaDB server.
+
+### Why the change?
+With log data exceeding 7 million rows, SQLite became a performance bottleneck for Grafana visualizations. The switch to MariaDB allows for:
+- Concurrent writes from multiple sensors.
+- Significant performance boost in queries (Indexed DATETIME).
+- Centralized storage for multiple scanner nodes.
+
+### New Prerequisites
+- **MariaDB/MySQL Server** (Docker or Bare Metal).
+- Python Library: `mysql-connector-python` (added to `requirements.txt`).
+
+### Configuration
+The `consolidator.py` script now looks for the database host. 
+You can set this via Environment Variable in your Docker Compose:
+
+```yaml
+environment:
+  - DB_HOST=10.0.1.2  # IP of your MariaDB Server
+  - DB_USER=technoshed_user
+  - DB_PASS=your_password
+  
 ## 📂 Project Structure
 
 ```text

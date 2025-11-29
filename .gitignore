@@ -25,4 +25,7 @@ env/
 
 # --- IDE Settings ---
 .vscode/
-.idea/
+.idea/.env
+*.db
+venv/
+__pycache__/

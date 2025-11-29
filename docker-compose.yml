@@ -19,6 +19,7 @@ services:
       - ./server_receiver.py:/app/server_receiver.py
       - ./consolidator.py:/app/consolidator.py
       - ./requirements.txt:/app/requirements.txt:ro
+      - ./utilities:/app/utilities
       # Main log directory mount (rw access for saving/consolidating)
       - /mnt/ssd/HOME/PUBLIC-SHARE/ziggy_logs:/app/ziggy_logs:rw 
       

@@ -1,74 +1,61 @@
 # ---------------------------------------------------------------------------------------
-# ZIGGY CONSOLIDATOR V6.1 (SQLite + Permissions Fix)
-# Purpose: Ingests CSV logs into SQLite and fixes permissions so Grafana can read it.
+# ZIGGY CONSOLIDATOR - V7.0.0 (MariaDB Edition)
+# ---------------------------------------------------------------------------------------
+# DATE: 29-11-2025
+# AUTHOR: Karl (TechnoShed)
+#
+# PURPOSE: 
+# Reads buffered CSV logs from the incoming directory and performs bulk inserts
+# into a central MariaDB server. Replaces previous SQLite functionality.
+#
+# CHANGES V7.0:
+# - REMOVED: SQLite3 dependency and file locking logic.
+# - ADDED: mysql.connector for remote database connections.
+# - ADDED: Environment variable support for DB_HOST (Universal LAN Access).
+# - OPTIMIZATION: Uses transactions to commit rows in file-based chunks.
 # ---------------------------------------------------------------------------------------
 import os
 import sys
 import time
-import sqlite3
 import csv
+import mysql.connector
 
 # --- CONFIGURATION ---
-LOGS_DIR = '/app/ziggy_logs' 
-INCOMING_DIR = os.path.join(LOGS_DIR, 'incoming') 
-DB_FILENAME = "ziggy_data.db"
-DB_PATH = os.path.join(LOGS_DIR, DB_FILENAME)
+INCOMING_DIR = '/app/ziggy_logs/incoming' 
+
+# Database Details - Matching your Docker Environment
+DB_CONFIG = {
+    'user': 'technoshed_user',
+    'password': 'FatSausageBun',  # Ensure this matches your .env!
+    'host': '10.0.1.2',      # Use container name if on same net, or Host IP
+    'database': 'ziggy_main',
+    'raise_on_warnings': True
+}
 
 EXPECTED_COLUMNS = 7 
 
-def init_db():
-    """Creates the SQLite DB and Table if they don't exist, and FIXES PERMISSIONS."""
+def get_db_connection():
+    """Establishes connection to MariaDB."""
     try:
-        # 1. Connect (Creates file if missing)
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        
-        # 2. Enable WAL Mode
-        c.execute('PRAGMA journal_mode=WAL;')
-        
-        # 3. Create Table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS ble_logs (
-                timestamp_utc TEXT,
-                addr TEXT,
-                device_id TEXT,
-                rssi INTEGER,
-                channel TEXT,
-                security TEXT,
-                scanner_device TEXT
-            )
-        ''')
-        
-        # 4. Create Indexes
-        c.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON ble_logs (timestamp_utc);')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_dev_id ON ble_logs (device_id);')
-        
-        conn.commit()
-        conn.close()
-
-        # 5. CRITICAL PERMISSION FIX
-        # Force the file to be Read/Write for Everyone (666)
-        # This allows Grafana (User 472) to read a file created by Docker (Root)
-        os.chmod(DB_PATH, 0o666) 
-        print(f"[{time.ctime()}] DB initialized and permissions set to 666.")
-
-    except Exception as e:
-        print(f"[{time.ctime()}] DB Init Error: {e}")
-        # Don't exit, try to continue
-        pass
+        conn = mysql.connector.connect(**DB_CONFIG)
+        return conn
+    except mysql.connector.Error as err:
+        print(f"[{time.ctime()}] ❌ DB Connection Error: {err}")
+        return None
 
 def ingest_chunk(file_path):
-    """Reads a CSV chunk and performs a bulk INSERT into SQLite."""
+    """Reads a CSV chunk and performs a bulk INSERT into MariaDB."""
     rows_to_insert = []
     
     try:
         with open(file_path, 'r') as f:
             lines = f.readlines()
-            if len(lines) < 2: return True 
+            if len(lines) < 2: return True # Empty file, just delete it
             
             reader = csv.reader(lines[1:]) 
             
             for parts in reader:
+                # Handle cases where device names have commas
                 if len(parts) > EXPECTED_COLUMNS:
                     merge_count = len(parts) - EXPECTED_COLUMNS
                     merged_id = ','.join(parts[2 : 2 + 1 + merge_count])
@@ -81,41 +68,56 @@ def ingest_chunk(file_path):
                 rows_to_insert.append(final_row)
 
         if rows_to_insert:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.executemany('''
-                INSERT INTO ble_logs (timestamp_utc, addr, device_id, rssi, channel, security, scanner_device)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', rows_to_insert)
+            conn = get_db_connection()
+            if not conn: return False # Keep file, try again later
+
+            cursor = conn.cursor()
+            
+            # Syntax change: SQLite uses ?, MySQL uses %s
+            insert_query = """
+                INSERT INTO ble_logs 
+                (timestamp_utc, addr, device_id, rssi, channel, security, scanner_device)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            cursor.executemany(insert_query, rows_to_insert)
             conn.commit()
+            
+            print(f"[{time.ctime()}] ✅ Inserted {cursor.rowcount} rows from {os.path.basename(file_path)}")
+            
+            cursor.close()
             conn.close()
             return True
             
     except Exception as e:
-        print(f"[{time.ctime()}] Ingest Error {file_path}: {e}")
+        print(f"[{time.ctime()}] ❌ Ingest Error {file_path}: {e}")
         return False
 
     return True
 
 def run_consolidation():
-    # Ensure DB exists and has correct permissions BEFORE checking for files
-    init_db() 
-    
     if not os.path.exists(INCOMING_DIR): return
+    
     files = [f for f in os.listdir(INCOMING_DIR) if f.endswith('.csv')]
-    if not files: return
+    if not files: 
+        print(f"[{time.ctime()}] No files to process.")
+        return
     
     files.sort()
     print(f"[{time.ctime()}] Processing {len(files)} chunks...")
     
     for filename in files:
         full_path = os.path.join(INCOMING_DIR, filename)
+        
+        # If ingestion succeeds, delete the CSV. If it fails, keep it.
         if ingest_chunk(full_path):
             try:
                 os.remove(full_path)
             except: pass
         else:
-            print(f"[{time.ctime()}] Failed to ingest {filename}")
+            print(f"[{time.ctime()}] Failed to ingest {filename} (Keeping for retry)")
 
 if __name__ == '__main__':
+    # Wait a moment for DB to be ready if script just started
+    time.sleep(2) 
     run_consolidation()
