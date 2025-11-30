@@ -13,11 +13,11 @@ echo "--- Starting Flask Receiver on port 5001 ---"
 python /app/server_receiver.py & 
 
 # --- 3. Start Consolidation Loop (Foreground) ---
-echo "--- Starting Consolidation Loop (every 300s) ---"
+echo "--- Starting Consolidation Loop (every 60 seconds) ---"
 while true; do 
   echo "--- Running Consolidation Script ---"
   python /app/consolidator.py
-  sleep 150
+  sleep 60 # sleep for 60 seconds (1 minute)
 done
 
 # Wait command is not strictly needed here since the while loop is foreground, 
