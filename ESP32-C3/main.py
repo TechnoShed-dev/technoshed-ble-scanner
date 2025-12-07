@@ -1,8 +1,8 @@
 # ---------------------------------------------------------------------------------------
-# ZIGGY MICRO APPLICATION - V2.2.0 (Boot & Blast)
+# ZIGGY MICRO APPLICATION - V2.2.1 (Boot & Blast)
 # ---------------------------------------------------------------------------------------
 # DEVICE:  ESP32-C3 (Ziggy Micro)
-# CHANGE:  V2.2 - Added "Phase 0" Boot Upload.
+# CHANGE:  V2.2.1 - Added tweaks for funcatioanlity.
 #          Checks for backlog immediately on startup while RAM is fresh and
 #          WiFi is likely still active from boot.py.
 # ---------------------------------------------------------------------------------------
@@ -21,9 +21,10 @@ import os
 import errno
 
 # --- CONFIGURATION ---
-DEVICE_NAME = "ZIGGY_MICRO_02"
-SCAN_DURATION_MS = 5000  
-UPLOAD_INTERVAL_S = 15 
+DEVICE_NAME = "DEVICE_NAME" # <<<----- SET DEVICE NAME HERE
+
+SCAN_DURATION_MS = 30000 # 30 Second scan to capture distant pings
+UPLOAD_INTERVAL_S = 40   # 40 Second upload cycle 
   
 # CATCH-UP SETTINGS
 MAX_BATCH_FILES = 5      
@@ -258,7 +259,7 @@ async def scan_and_upload_loop():
         
         # --- PHASE 1: SCAN ---
         found_devices = []
-        print(f"\n[Scanner] Scanning 5s...")
+        print(f"\n[Scanner] BLE Scanning for {int(SCAN_DURATION_MS/1000)} s...")
         try:
             async with aioble.scan(duration_ms=SCAN_DURATION_MS, interval_us=30000, window_us=30000, active=True) as scanner:
                 async for result in scanner:

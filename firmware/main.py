@@ -90,7 +90,7 @@ def set_unified_status(mode, status_line, progress, total_files=0):
     usage_pct = get_storage_stats()
     
     # 1. Update OLED (Handled inside hardware_interface)
-    set_tactical_display(mode, status_line, progress, total_files, time_str, usage_pct, VERSION) 
+    # set_tactical_display(mode, status_line, progress, total_files, time_str, usage_pct, VERSION) 
     
     # 2. Console Debugging
     print(f"[STATUS] MODE:{mode} LINE:{status_line} PROG:{progress}")
