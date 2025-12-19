@@ -48,7 +48,14 @@ services:
       GF_PLUGINS_ALLOW_UNSIGNED: "marcusolsson-csv-datasource,fr-ser-sqlite-datasource"
       GF_PLUGIN_ALLOW_LOCAL_MODE: "true"
       GF_PLUGIN_MARCUSOLSSON_CSV_DATASOURCE_ALLOW_LOCAL_MODE: "true"
-      GF_PLUGIN_FR_SER_SQLITE_DATASOURCE_ALLOW_LOCAL_MODE: "true" # CRITICAL
+      GF_PLUGIN_FR_SER_SQLITE_DATASOURCE_ALLOW_LOCAL_MODE: "true"
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: "mail.gmx.com:587"
+      GF_SMTP_USER: 'rogueb1tdesigns@gmx.com'
+      GF_SMTP_PASSWORD: 'TsD704!53TsD'
+      GF_SMTP_FROM_ADDRESS: 'rogueb1tdesigns@gmx.com'
+      GF_SMTP_FROM_NAME: 'Ziggy Scanner'
+      GF_SMTP_SKIP_VERIFY: true
     volumes:
       # Mount 1: Persistent storage for dashboards and database
       - grafana-storage:/var/lib/grafana

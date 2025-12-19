@@ -1,10 +1,11 @@
 # ---------------------------------------------------------------------------------------
-# ZIGGY MICRO APPLICATION - V2.2.1 (Boot & Blast)
+# ZIGGY MICRO APPLICATION - V3.0.0 (Fleet Edition)
 # ---------------------------------------------------------------------------------------
 # DEVICE:  ESP32-C3 (Ziggy Micro)
-# CHANGE:  V2.2.1 - Added tweaks for funcatioanlity.
-#          Checks for backlog immediately on startup while RAM is fresh and
-#          WiFi is likely still active from boot.py.
+# CHANGE:  V3.0.0 - Full Config Migration & Remote Management
+#          - All variables moved to config dictionary
+#          - Buffer & Burst logic fixed (checks threshold before connect)
+#          - Remote JSON fetch added for Over-The-Air setting updates
 # ---------------------------------------------------------------------------------------
 
 import uasyncio as asyncio
@@ -19,24 +20,92 @@ import binascii
 import network
 import os
 import errno
+import ujson
 
-# --- CONFIGURATION ---
-DEVICE_NAME = "DEVICE_NAME" # <<<----- SET DEVICE NAME HERE
-
-SCAN_DURATION_MS = 30000 # 30 Second scan to capture distant pings
-UPLOAD_INTERVAL_S = 40   # 40 Second upload cycle 
-  
-# CATCH-UP SETTINGS
-MAX_BATCH_FILES = 5      
-MIN_SAFE_RAM = 30000     # Increased safety buffer (was 25000)
-MAX_STORED_FILES = 50    
-MAX_CONSECUTIVE_FAILS = 5 
+# --- DEFAULT CONFIGURATION (Failsafe) ---
+# These are used if config.json is missing or unreadable
+config = {
+    "DEVICE_NAME": "UNNAMED_DEVICE",
+    "SCAN_DURATION_MS": 30000,
+    "UPLOAD_INTERVAL_S": 150,
+    "MAX_BATCH_FILES": 5,
+    "MIN_SAFE_RAM": 30000,
+    "MAX_STORED_FILES": 50,
+    "MAX_CONSECUTIVE_FAILS": 5
+}
 
 # --- LED SETUP ---
 try:
     led = machine.Pin("LED", machine.Pin.OUT)
 except:
     led = machine.Pin(8, machine.Pin.OUT) 
+
+# --- CONFIG MANAGER ---
+def load_local_config():
+    global config
+    print("[Config] Loading local settings...")
+    try:
+        with open('config.json', 'r') as f:
+            local_data = ujson.load(f)
+            # Update our config dictionary with whatever was in the file
+            for key, value in local_data.items():
+                if key in config:
+                    config[key] = value
+                    print(f"   - {key}: {value}")
+    except OSError:
+        print("[Config] No config.json found. Using defaults.")
+    except Exception as e:
+        print(f"[Config] Error reading file: {e}. Using defaults.")
+
+def check_remote_config():
+    global config
+    
+    # NEW URL STRUCTURE
+    # e.g. https://qr.technoshed.co.uk/BLE/GAT-YARD-02
+    target_url = f"https://qr.technoshed.co.uk/BLE/{config['DEVICE_NAME']}"
+    print(f"[Config] Checking remote: {target_url}")
+    
+    try:
+        # 5-second timeout to prevent hanging
+        res = requests.get(target_url, timeout=5)
+        
+        if res.status_code == 200:
+            try:
+                new_settings = res.json()
+            except:
+                print("[Config] Error: Response is not valid JSON")
+                res.close()
+                return False
+
+            res.close()
+            
+            changes_made = False
+            
+            # Compare and update only if different
+            for key, value in new_settings.items():
+                if key in config and config[key] != value:
+                    print(f"[Config] Change detected! {key}: {config[key]} -> {value}")
+                    config[key] = value
+                    changes_made = True
+            
+            if changes_made:
+                print("[Config] Saving new settings to flash...")
+                with open('config.json', 'w') as f:
+                    ujson.dump(config, f)
+                return True 
+            else:
+                print("[Config] Remote matches local. No changes.")
+        else:
+            print(f"[Config] Server returned {res.status_code}")
+            res.close()
+            
+    except Exception as e:
+        print(f"[Config] Update failed: {e}")
+    
+    return False
+
+# Load config immediately on import
+load_local_config()
 
 # --- PERSISTENT COUNTER ---
 def get_next_counter():
@@ -111,7 +180,7 @@ def disconnect_wifi():
 def save_scan_to_flash(scan_results, counter):
     gc.collect()
     timestamp = get_formatted_time()
-    filename = f"{DEVICE_NAME}_ble_log_{counter}.csv"
+    filename = f"{config['DEVICE_NAME']}_ble_log_{counter}.csv"
     
     try:
         with open(filename, 'w') as f:
@@ -123,7 +192,7 @@ def save_scan_to_flash(scan_results, counter):
                 security = result['security']
                 
                 line = "{},{},{},{},{},{},{}\n".format(
-                    timestamp, formatted_addr, dev_id, rssi, "BLE", security, DEVICE_NAME
+                    timestamp, formatted_addr, dev_id, rssi, "BLE", security, config['DEVICE_NAME']
                 )
                 f.write(line)
         print(f"[Storage] Saved {filename}")
@@ -135,9 +204,9 @@ def save_scan_to_flash(scan_results, counter):
 def manage_storage():
     try:
         files = [f for f in os.listdir() if f.endswith('.csv') and '_ble_log_' in f]
-        if len(files) > MAX_STORED_FILES:
+        if len(files) > config['MAX_STORED_FILES']:
             files.sort()
-            excess = len(files) - MAX_STORED_FILES
+            excess = len(files) - config['MAX_STORED_FILES']
             for i in range(excess):
                 os.remove(files[i])
                 print(f"[Storage] Pruned: {files[i]}")
@@ -154,7 +223,6 @@ def get_oldest_files(limit):
 
 def upload_single_file(filename):
     """Reads a file and uploads it. Returns True on success."""
-    # Aggressive GC before allocation
     gc.collect()
     
     csv_payload = None
@@ -169,8 +237,8 @@ def upload_single_file(filename):
 
     free_ram = gc.mem_free()
     
-    # STRICT SAFETY CHECK
-    if free_ram < MIN_SAFE_RAM:
+    # STRICT SAFETY CHECK using Config
+    if free_ram < config['MIN_SAFE_RAM']:
         print(f"[Upload] Low RAM ({free_ram}). Aborting upload.")
         return False
 
@@ -179,14 +247,12 @@ def upload_single_file(filename):
         'X-Pico-Device': filename,
         'CF-Access-Client-Id': secrets.CF_CLIENT_ID,
         'CF-Access-Client-Secret': secrets.CF_CLIENT_SECRET,
-        'User-Agent': 'Ziggy-Micro/2.2'
+        'User-Agent': 'Ziggy-Micro/3.0'
     }
 
     try:
         led.on()
         print(f"[Upload] Sending {filename} ({len(csv_payload)}b)...")
-        
-        # GC again right before the heavy SSL handshake
         gc.collect() 
         
         response = requests.post(secrets.SERVER_URL, headers=headers, data=csv_payload, timeout=20)
@@ -195,7 +261,6 @@ def upload_single_file(filename):
         status = response.status_code
         response.close() 
         
-        # Clear the payload from RAM immediately
         csv_payload = None
         gc.collect()
         
@@ -219,21 +284,21 @@ def upload_single_file(filename):
         return False
 
 async def scan_and_upload_loop():
-    print("[ZiggyMicro] Starting V2.2 (Boot & Blast)...")
+    print(f"[ZiggyMicro] Starting V3.0 ({config['DEVICE_NAME']})...")
     
     # --- PHASE 0: BOOT BACKLOG CLEAR ---
-    # Try to upload immediately using the fresh RAM and connection from boot.py
-    # We do NOT run the disconnect_wifi() here initially.
     print("[System] Checking backlog on boot...")
-    if get_oldest_files(MAX_BATCH_FILES):
+    # Using config value for batch size
+    if get_oldest_files(config['MAX_BATCH_FILES']):
         print("[System] Backlog found. Using boot connection to upload...")
         
-        # We reuse the connection if possible. 
-        # If boot.py failed but this runs, connect_smart_wifi will try again.
         if await connect_smart_wifi():
-            pending_files = get_oldest_files(MAX_BATCH_FILES)
+            # Check for remote config update on boot while we have connection!
+            check_remote_config()
+            
+            pending_files = get_oldest_files(config['MAX_BATCH_FILES'])
             for filename in pending_files:
-                if gc.mem_free() < MIN_SAFE_RAM:
+                if gc.mem_free() < config['MIN_SAFE_RAM']:
                     print(f"[System] Low RAM ({gc.mem_free()}). Stopping boot batch.")
                     break
                 
@@ -249,7 +314,6 @@ async def scan_and_upload_loop():
         else:
             print("[System] Boot Connect Failed.")
 
-    # NOW we disconnect to ensure radio silence for the first scan
     disconnect_wifi()
     
     fail_count = 0
@@ -259,9 +323,11 @@ async def scan_and_upload_loop():
         
         # --- PHASE 1: SCAN ---
         found_devices = []
-        print(f"\n[Scanner] BLE Scanning for {int(SCAN_DURATION_MS/1000)} s...")
+        scan_dur = config['SCAN_DURATION_MS']
+        print(f"\n[Scanner] BLE Scanning for {int(scan_dur/1000)} s...")
+        
         try:
-            async with aioble.scan(duration_ms=SCAN_DURATION_MS, interval_us=30000, window_us=30000, active=True) as scanner:
+            async with aioble.scan(duration_ms=scan_dur, interval_us=30000, window_us=30000, active=True) as scanner:
                 async for result in scanner:
                     if not result.device: continue
                     
@@ -277,11 +343,7 @@ async def scan_and_upload_loop():
                                  uuid_part = binascii.hexlify(payload[start+2:start+10]).decode()
                                  dev_id = f"iBeacon_{uuid_part}"
                              except: dev_id = "iBeacon_Malformed"
-                        elif b'\x10\x05' in payload: dev_id = "GENERIC"
                         else: dev_id = "GENERIC"
-                    elif b'\x6f\xfd' in payload:
-                          security = "Exposure_Notif"
-                          dev_id = "Contact_Trace"
                     
                     if result.name():
                         if dev_id == "GENERIC": security = "Named_Device"
@@ -309,34 +371,48 @@ async def scan_and_upload_loop():
         else:
             print("[Scanner] No Named Devices.")
 
-        # --- MEMORY CLEANUP (CRITICAL) ---
-        # We must clear the scan results from RAM before we try to start WiFi SSL
+        # --- MEMORY CLEANUP ---
         del found_devices 
         found_devices = None
         gc.collect()
         
-        # --- RADIO SWAP (CRITICAL) ---
-        # Kill Bluetooth to free up the shared radio RAM for WiFi/SSL
+        # --- RADIO SWAP ---
         if bluetooth.BLE().active():
             print("[System] Killing BLE to free RAM...")
             bluetooth.BLE().active(False)
         
-        # --- PHASE 3: CATCH-UP UPLOAD ---
-        # Get up to 5 files to clear backlog
-        pending_files = get_oldest_files(MAX_BATCH_FILES)
+        # --- PHASE 3: CATCH-UP UPLOAD (BUFFER & BURST) ---
+        # 1. Count Total Files
+        try:
+            all_logs = [f for f in os.listdir() if f.endswith('.csv') and '_ble_log_' in f]
+            total_count = len(all_logs)
+        except:
+            total_count = 0
+            
+        print(f"[System] Buffer Status: {total_count}/{config['MAX_BATCH_FILES']} files.")
+
+        # 2. DECISION: Only upload if buffer is FULL or RAM is DANGEROUS
+        should_upload = (total_count >= config['MAX_BATCH_FILES']) or (gc.mem_free() < config['MIN_SAFE_RAM'])
         
-        if pending_files:
-            print(f"[System] Backlog: {len(pending_files)} files. Starting batch...")
+        if should_upload:
+            print(f"[System] Threshold met. Starting Batch Upload...")
+            
+            pending_files = get_oldest_files(config['MAX_BATCH_FILES'])
             
             if await connect_smart_wifi():
+                
+                # --- NEW: CHECK REMOTE CONFIG ---
+                # Check for updates while we are online!
+                check_remote_config()
+                
                 for filename in pending_files:
                     
-                    # 1. Check RAM before EVERY upload
-                    if gc.mem_free() < MIN_SAFE_RAM:
+                    # Check RAM before EVERY upload
+                    if gc.mem_free() < config['MIN_SAFE_RAM']:
                         print(f"[System] Low RAM ({gc.mem_free()}). Stopping batch.")
                         break 
 
-                    # 2. Upload
+                    # Upload
                     if upload_single_file(filename):
                         print(f"[Storage] Deleting {filename}")
                         try: os.remove(filename)
@@ -344,28 +420,29 @@ async def scan_and_upload_loop():
                         fail_count = 0 
                     else:
                         fail_count += 1
-                        print(f"[System] Fail Count: {fail_count}/{MAX_CONSECUTIVE_FAILS}")
-                        # If a network error occurs, stop the batch
+                        print(f"[System] Fail Count: {fail_count}/{config['MAX_CONSECUTIVE_FAILS']}")
                         break 
                     
-                    # 3. Clean RAM between files
                     gc.collect()
-                    time.sleep(1) # Breath
+                    time.sleep(1) 
                 
                 disconnect_wifi()
             else:
                 fail_count += 1
                 print(f"[WiFi] Connect Fail. Count: {fail_count}")
                 disconnect_wifi()
+        else:
+             print("[System] Buffer not full. Skipping WiFi to save power.")
                 
         # --- PHASE 4: REBOOT CHECK ---
-        if fail_count >= MAX_CONSECUTIVE_FAILS:
+        if fail_count >= config['MAX_CONSECUTIVE_FAILS']:
             print("[System] CRITICAL: Too many failures. Rebooting...")
             time.sleep(2)
             machine.reset()
 
         # --- SLEEP ---
-        remaining_time = UPLOAD_INTERVAL_S - (SCAN_DURATION_MS / 1000) - 5
+        # Calculate sleep based on config values
+        remaining_time = config['UPLOAD_INTERVAL_S'] - (config['SCAN_DURATION_MS'] / 1000) - 5
         if remaining_time > 0:
             print(f"[System] Sleeping {remaining_time}s...")
             await asyncio.sleep(remaining_time)
